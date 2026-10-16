@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "files": {
+    "demo": {
+      "path": "packet.json",
+      "sha256": "5789728c34fc198294db2ec174fe020ecef309118ffa3329aa4685e00fb1522d"
+    }
+  }
+}

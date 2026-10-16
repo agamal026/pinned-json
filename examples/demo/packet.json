@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "case_id": "demo",
+  "task": "Decide whether the claim is supported by the evidence.",
+  "claim": "The example service returned status 200.",
+  "evidence": [
+    {
+      "id": "E01",
+      "text": "Synthetic observation: status=200."
+    }
+  ]
+}

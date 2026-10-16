@@ -1,0 +1,33 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install .
+      - run: python -m unittest discover -s tests -v
+      - name: Verify documented example
+        run: |
+          pinned-json --root examples/demo --manifest-sha256 a628ac4a58c386a3e11da73b63a850001f1334fb0e261dae9f203aa76d43a9e3 verify
+          pinned-json --root examples/demo --manifest-sha256 a628ac4a58c386a3e11da73b63a850001f1334fb0e261dae9f203aa76d43a9e3 emit demo > emitted.json
+          cmp examples/demo/packet.json emitted.json
