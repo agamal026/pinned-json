@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import tempfile
@@ -58,6 +59,37 @@ class PinnedJsonTests(unittest.TestCase):
              "--manifest-sha256", trusted if trusted is not None else self.trusted, *args],
             capture_output=True, timeout=5,
         )
+
+    def restrict_mode(self, path: Path, mode: int) -> None:
+        previous = stat.S_IMODE(path.stat().st_mode)
+        self.addCleanup(path.chmod, previous)
+        path.chmod(mode)
+
+    def require_permission_denied(self, operation) -> None:
+        try:
+            operation()
+        except PermissionError:
+            return
+        self.skipTest("Permission restrictions are bypassed in this environment")
+
+    def assert_traversal_without_listing(self, directory: Path) -> None:
+        self.restrict_mode(directory, 0o111)
+        self.require_permission_denied(lambda: os.listdir(directory))
+        self.assertEqual(digest((self.root / "manifest.json").read_bytes()), self.trusted)
+        self.assertEqual(self.path.read_bytes(), self.body)
+        manifest = self.load()
+        self.assertIsNone(manifest.verify())
+        self.assertEqual(manifest.emit("sample"), self.body)
+        verified = self.cli("verify")
+        self.assertEqual((verified.returncode, verified.stdout, verified.stderr), (0, b"", b""))
+        emitted = self.cli("emit", "sample")
+        self.assertEqual((emitted.returncode, emitted.stdout, emitted.stderr), (0, self.body, b""))
+
+    def assert_cli_access_denied(self) -> None:
+        for args in (("verify",), ("emit", "sample")):
+            result = self.cli(*args)
+            self.assertEqual((result.returncode, result.stdout, result.stderr),
+                             (1, b"", b"FILE_ACCESS_ERROR\n"))
 
     def test_exact_emission_and_unlisted_files_are_not_read(self):
         (self.root / "labels.json").write_bytes(b"not JSON; unapproved label")
@@ -116,6 +148,38 @@ class PinnedJsonTests(unittest.TestCase):
         self.value["files"]["sample"]["path"] = "nested/case.json"
         self.trusted = self.write_manifest(self.value)
         self.assertEqual(self.load().emit("sample"), self.body)
+
+    def test_execute_only_root_is_supported(self):
+        self.assert_traversal_without_listing(self.root)
+
+    def test_execute_only_root_ancestor_is_supported(self):
+        self.assert_traversal_without_listing(self.base)
+
+    def test_execute_only_fixture_ancestor_is_supported(self):
+        nested = self.root / "nested"
+        nested.mkdir()
+        self.path = self.path.rename(nested / "case.json")
+        self.value["files"]["sample"]["path"] = "nested/case.json"
+        self.trusted = self.write_manifest(self.value)
+        self.assert_traversal_without_listing(nested)
+
+    def test_directory_search_permission_is_required(self):
+        manifest = self.load()
+        self.restrict_mode(self.root, 0o444)
+        self.require_permission_denied(self.path.read_bytes)
+        self.assert_code("FILE_ACCESS_ERROR", self.load)
+        self.assert_code("FILE_ACCESS_ERROR", manifest.verify)
+        self.assert_code("FILE_ACCESS_ERROR", lambda: manifest.emit("sample"))
+        self.assert_cli_access_denied()
+
+    def test_fixture_read_permission_is_required(self):
+        manifest = self.load()
+        self.restrict_mode(self.path, 0o000)
+        self.require_permission_denied(self.path.read_bytes)
+        self.load()
+        self.assert_code("FILE_ACCESS_ERROR", manifest.verify)
+        self.assert_code("FILE_ACCESS_ERROR", lambda: manifest.emit("sample"))
+        self.assert_cli_access_denied()
 
     def test_parent_components_in_root_are_rejected(self):
         self.assert_code("ROOT_INVALID", lambda: load_manifest(self.root / ".." / "fixtures", self.trusted))

@@ -54,6 +54,8 @@ The root must contain `manifest.json` with exactly this structure:
 
 Paths are relative to the selected root. Absolute paths, traversal components,
 symlinks in the root or any file ancestor, and nonregular files are rejected.
+Directories require search (execute) permission; listing permission is
+unnecessary. The manifest and selected fixtures must be readable.
 Manifest and fixture files are each limited to 256 KiB. JSON must be UTF-8;
 duplicate object keys, nonfinite numbers and malformed JSON are rejected.
 Fixtures may contain any JSON value; application-specific schemas are outside

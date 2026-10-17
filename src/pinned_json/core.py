@@ -114,7 +114,8 @@ def _access_error(error: OSError) -> PinnedJsonError:
 
 
 def _open_root(root: str) -> int:
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    # Path descriptors allow traversal through directories that cannot be listed.
+    flags = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
     fd = os.open("/", flags)
     try:
         for part in root.split("/"):
@@ -139,7 +140,7 @@ def _read_file(root: str, path: str) -> bytes:
         for part in parts[:-1]:
             next_fd = os.open(
                 part,
-                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
                 dir_fd=directory_fd,
             )
             os.close(directory_fd)

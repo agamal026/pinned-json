@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pinned-json"
-version = "0.1.0"
+version = "0.1.1"
 description = "Verify and emit exact JSON fixtures from a trusted hash-pinned allowlist."
 readme = "README.md"
 requires-python = ">=3.10"

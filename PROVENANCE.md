@@ -13,3 +13,6 @@ evaluation corpus, reference judgments or private project records are included.
 The original application-specific checks are not advertised as general secret
 sanitization. The reusable scope is bounded file loading, pinned-byte integrity,
 strict JSON parsing and exact-byte emission.
+
+The 0.1.1 directory-permission fix, synthetic regressions and accompanying
+documentation were developed with Codex assistance.
