@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from .core import PinnedJsonError, load_manifest
@@ -14,6 +15,22 @@ class _Parser(argparse.ArgumentParser):
         self.exit(2, "ARGUMENT_ERROR\n")
 
 
+def _discard_failed_stdout(output) -> None:
+    # Python flushes the original standard stream again during shutdown. After
+    # a failed buffered write, send that retry to the null device so it cannot
+    # append a traceback or replace our exit status. Leave caller-owned streams
+    # alone; this cleanup is only for the process's original stdout buffer.
+    if output is not getattr(sys.__stdout__, "buffer", None):
+        return
+    try:
+        with open(os.devnull, "wb", buffering=0) as sink:
+            os.dup2(sink.fileno(), output.fileno())
+    except (OSError, ValueError):
+        # Cleanup failure must not hide the original I/O error. Shutdown may
+        # still report its own error if the OS cannot provide a usable sink.
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _Parser(prog="pinned-json", description="Verify and emit externally pinned JSON fixtures.")
     parser.add_argument("--root", required=True, help="Directory containing manifest.json")
@@ -23,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     emit = commands.add_parser("emit", help="Write one verified fixture's original bytes")
     emit.add_argument("case_id")
     args = parser.parse_args(argv)
+    output = None
     try:
         manifest = load_manifest(args.root, args.manifest_sha256)
         if args.command == "verify":
@@ -45,6 +63,8 @@ def main(argv: list[str] | None = None) -> int:
         print(error.code, file=sys.stderr)
         return 1
     except OSError:
+        if output is not None:
+            _discard_failed_stdout(output)
         print("IO_ERROR", file=sys.stderr)
         return 1
     except Exception:

@@ -8,6 +8,10 @@
   leave a partial prefix; emission is not transactional.
 - Add real-pipe regressions and controls for short writes, stalled output,
   write/flush failures, validation before output, and full unbuffered emission.
+- Avoid a second stdout flush error during interpreter shutdown after an output
+  failure. Redirect only the process's original stdout to the null device;
+  leave caller-owned replacement streams untouched. Add real buffered-output
+  regressions for closed pipes, a full device, and a blocked pipe.
 
 ## 0.1.1 — 2026-10-17
 
