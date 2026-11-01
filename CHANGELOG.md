@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Complete short writes when emitting verified fixture bytes to raw stdout.
+  Report `IO_ERROR` instead of success when output makes no progress, including
+  a nonblocking pipe used with unbuffered Python. An output failure can still
+  leave a partial prefix; emission is not transactional.
+- Add real-pipe regressions and controls for short writes, stalled output,
+  write/flush failures, validation before output, and full unbuffered emission.
+
 ## 0.1.1 — 2026-10-17
 
 - Allow execute-only fixture roots, root ancestors and nested directories by

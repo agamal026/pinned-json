@@ -30,8 +30,16 @@ def main(argv: list[str] | None = None) -> int:
         else:
             payload = manifest.emit(args.case_id)
             # No stdout writes occur until all input validation has completed.
-            sys.stdout.buffer.write(payload)
-            sys.stdout.buffer.flush()
+            output = sys.stdout.buffer
+            remaining = memoryview(payload)
+            while remaining:
+                written = output.write(remaining)
+                # Raw stdout (-u) may write only a prefix or return None when
+                # it would block. Never report success or spin on no progress.
+                if written is None or written <= 0:
+                    raise OSError("output made no progress")
+                remaining = remaining[written:]
+            output.flush()
         return 0
     except PinnedJsonError as error:
         print(error.code, file=sys.stderr)
