@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,7 @@ from unittest import mock
 
 from pinned_json import MAX_BYTES, PinnedJsonError, load_manifest
 from pinned_json import core
+from pinned_json.__main__ import main
 
 
 def digest(data: bytes) -> str:
@@ -326,6 +328,114 @@ class PinnedJsonTests(unittest.TestCase):
         self.assertEqual((verified.returncode, verified.stdout, verified.stderr), (0, b"", b""))
         emitted = self.cli("emit", "sample")
         self.assertEqual((emitted.returncode, emitted.stdout, emitted.stderr), (0, self.body, b""))
+
+    def cli_with_output(self, output, *args):
+        stderr = io.StringIO()
+        with mock.patch("sys.stdout", buffer=output), mock.patch("sys.stderr", stderr):
+            result = main(["--root", str(self.root), "--manifest-sha256", self.trusted, *args])
+        return result, stderr.getvalue()
+
+    def test_cli_short_writes_preserve_all_bytes(self):
+        captured = bytearray()
+        output = mock.Mock()
+
+        def short_write(data):
+            count = min(3, len(data))
+            captured.extend(data[:count])
+            return count
+
+        output.write.side_effect = short_write
+        self.assertEqual(self.cli_with_output(output, "emit", "sample"), (0, ""))
+        self.assertEqual(bytes(captured), self.body)
+        self.assertGreater(output.write.call_count, 1)
+        output.flush.assert_called_once_with()
+
+    def test_cli_raw_write_would_block_is_io_error(self):
+        output = mock.Mock()
+        output.write.side_effect = [None, AssertionError("must not spin")]
+        self.assertEqual(self.cli_with_output(output, "emit", "sample"), (1, "IO_ERROR\n"))
+        self.assertEqual(output.write.call_count, 1)
+        output.flush.assert_not_called()
+
+    def test_cli_zero_progress_is_io_error(self):
+        output = mock.Mock()
+        output.write.side_effect = [0, AssertionError("must not spin")]
+        self.assertEqual(self.cli_with_output(output, "emit", "sample"), (1, "IO_ERROR\n"))
+        self.assertEqual(output.write.call_count, 1)
+        output.flush.assert_not_called()
+
+    def test_cli_failure_after_short_write_is_io_error(self):
+        output = mock.Mock()
+        output.write.side_effect = [3, BrokenPipeError("private output detail")]
+        self.assertEqual(self.cli_with_output(output, "emit", "sample"), (1, "IO_ERROR\n"))
+        self.assertEqual(output.write.call_count, 2)
+        output.flush.assert_not_called()
+
+    def test_cli_flush_failure_is_io_error(self):
+        output = mock.Mock()
+        output.write.return_value = len(self.body)
+        output.flush.side_effect = OSError("private output detail")
+        self.assertEqual(self.cli_with_output(output, "emit", "sample"), (1, "IO_ERROR\n"))
+        output.flush.assert_called_once_with()
+
+    def test_cli_validation_precedes_every_output_operation(self):
+        self.path.write_bytes(b"unapproved content")
+        output = mock.Mock()
+        self.assertEqual(self.cli_with_output(output, "emit", "sample"),
+                         (1, "FILE_HASH_MISMATCH\n"))
+        output.write.assert_not_called()
+        output.flush.assert_not_called()
+
+    def nonblocking_cli(self, *, full):
+        # A real raw stdout can return a short count or None without raising.
+        # Make the pipe small and do not drain it until the child has exited.
+        import fcntl
+
+        body = b'"' + b"x" * (MAX_BYTES - 2) + b'"'
+        self.path.write_bytes(body)
+        self.value["files"]["sample"]["sha256"] = digest(body)
+        self.trusted = self.write_manifest(self.value)
+        read_fd, write_fd = os.pipe()
+        with os.fdopen(read_fd, "rb", buffering=0) as reader, \
+                os.fdopen(write_fd, "wb", buffering=0) as writer:
+            capacity = fcntl.fcntl(writer.fileno(), fcntl.F_SETPIPE_SZ, 4096)
+            self.assertLess(capacity, len(body))
+            os.set_blocking(writer.fileno(), False)
+            prefix = b"p" * capacity if full else b""
+            if full:
+                self.assertEqual(writer.write(prefix), len(prefix))
+            result = subprocess.run(
+                [sys.executable, "-u", "-m", "pinned_json", "--root", str(self.root),
+                 "--manifest-sha256", self.trusted, "emit", "sample"],
+                stdout=writer, stderr=subprocess.PIPE, timeout=5,
+            )
+            writer.close()
+            captured = reader.read()
+        self.assertEqual(captured[:len(prefix)], prefix)
+        return result, captured[len(prefix):], body
+
+    def test_cli_unbuffered_full_pipe_is_io_error(self):
+        result, emitted, _ = self.nonblocking_cli(full=True)
+        self.assertEqual((result.returncode, result.stderr, emitted), (1, b"IO_ERROR\n", b""))
+
+    def test_cli_unbuffered_partial_pipe_is_io_error(self):
+        result, emitted, body = self.nonblocking_cli(full=False)
+        self.assertEqual((result.returncode, result.stderr), (1, b"IO_ERROR\n"))
+        self.assertGreater(len(emitted), 0)
+        self.assertLess(len(emitted), len(body))
+        self.assertEqual(emitted, body[:len(emitted)])
+
+    def test_cli_unbuffered_large_emission_preserves_bytes(self):
+        body = b'"' + b"x" * (MAX_BYTES - 2) + b'"'
+        self.path.write_bytes(body)
+        self.value["files"]["sample"]["sha256"] = digest(body)
+        self.trusted = self.write_manifest(self.value)
+        result = subprocess.run(
+            [sys.executable, "-u", "-m", "pinned_json", "--root", str(self.root),
+             "--manifest-sha256", self.trusted, "emit", "sample"],
+            capture_output=True, timeout=5,
+        )
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, body, b""))
 
     def test_cli_failures_have_no_stdout_or_supplied_values(self):
         for args, trusted, expected in (
